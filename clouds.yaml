@@ -1,0 +1,11 @@
+clouds:
+  openstack:
+    auth:
+      auth_url: http://192.168.134.200/identity
+      application_credential_id: "a1514c0bb22544f4ad016e6a048abe9e"
+      application_credential_secret: "FLcPWxAgVey5vxRDASPnXxieS7sQNlzvzAnfNPH69_QYqBWh9tbn2TN1kxHcPpmd-WxCh0y_IReEodXUx9NNzg"
+    region_name: "RegionOne"
+    interface: "public"
+    identity_api_version: 3
+    auth_type: "v3applicationcredential"
+

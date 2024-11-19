@@ -1,0 +1,236 @@
+- name: List OpenStack instances
+  hosts: localhost
+  tasks:
+    - name: Gather information on OpenStack instances
+      openstack.cloud.server_info:
+        cloud: openstack  # References the name in clouds.yaml
+      register: instances
+
+    - name: Show instance information
+      debug:
+        var: instances
+    - name: Add security group rules
+      os_security_group_rule:
+        cloud: openstack
+        security_group: web_security_group
+        protocol: tcp
+        port_range_min: 80
+        port_range_max: 80
+        remote_ip_prefix: 0.0.0.0/0
+
+    - name: Create volume
+      os_volume:
+        state: present
+        size: 2
+        display_name: web_data_volume
+        availability_zone: nova
+    
+    - name: Create private network
+      os_network:
+        state: present
+        name: internal-net
+        external: false
+
+    - name: Create private subnet
+      os_subnet:
+        state: present
+        network_name: internal-net
+        name: internal-subnet
+        cidr: 192.168.10.0/24
+        dns_nameservers:
+          - 8.8.8.8
+          - 8.8.4.4
+
+    - name: Create router
+      os_router:
+        state: present
+        name: main-router
+        network: public
+        interfaces:
+          - internal-subnet
+
+    # Create Security Group and Rules
+    - name: Create web security group
+      os_security_group:
+        state: present
+        name: web-secgroup
+        description: "Web and SSH access"
+
+    - name: Allow SSH access
+      os_security_group_rule:
+        security_group: web-secgroup
+        protocol: tcp
+        port_range_min: 22
+        port_range_max: 22
+        remote_ip_prefix: 0.0.0.0/0
+
+    - name: Allow HTTP access
+      os_security_group_rule:
+        security_group: web-secgroup
+        protocol: tcp
+        port_range_min: 80
+        port_range_max: 80
+        remote_ip_prefix: 0.0.0.0/0
+
+    - name: Allow HTTPS access
+      os_security_group_rule:
+        security_group: web-secgroup
+        protocol: tcp
+        port_range_min: 443
+        port_range_max: 443
+        remote_ip_prefix: 0.0.0.0/0
+
+    # Create Volume
+    - name: Create bootable volume
+      os_volume:
+        state: present
+        size: 5
+        display_name: web-server-vol
+        image: 	cirros-0.6.3-x86_64-disk
+        wait: yes
+
+    # Create Instance
+    - name: Launch web server instance
+      os_server:
+        state: present
+        name: web-server
+        flavor: m1.nano
+        boot_from_volume: yes
+        volume_size: 5
+        image: 	cirros-0.6.3-x86_64-disk
+        key_name: sherif1
+        network: internal-net
+        security_groups: 
+          - web-secgroup
+        auto_ip: yes
+        wait: yes
+        timeout: 200
+      register: instance_info
+
+    # Create and Attach Additional Volume
+    - name: Create data volume
+      os_volume:
+        state: present
+        size: 2
+        display_name: data-vol
+        wait: yes
+      register: data_volume
+
+
+    # Configure Instance Metadata
+    - name: Set instance metadata
+      os_server_metadata:
+        server: web-server
+        metadata:
+          environment: production
+          role: web-server
+          backup: daily
+
+    # Create Instance Backup
+    #    - name: Create instance backup
+    # os_server_action:
+    #   server: web-server
+    #   action: create_image
+    #   image_name: web-server-backup-{{ ansible_date_time.date }}
+    #   wait: yes
+
+    # Output Instance Information
+    - name: Get instance info
+      os_server_info:
+        server: web-server
+      register: server_info
+
+   
+    # Volume Snapshot
+    - name: Create volume snapshot
+      os_volume_snapshot:
+        state: present
+        volume: web-server-vol
+        display_name: "web-server-vol-snap-{{ ansible_date_time.date }}"
+        wait: yes
+        force: yes
+      register: volume_snapshot
+
+    - name: Create data volume snapshot
+      os_volume_snapshot:
+        state: present
+        volume: data-vol
+        display_name: "data-vol-snap-{{ ansible_date_time.date }}"
+        wait: yes
+        force: yes
+      register: data_snapshot
+ 
+    # Instance Snapshot
+    - name: Get instance info
+      os_server_info:
+        server: web-server  
+      register: server_info
+    
+    - name: Stop instance for consistent snapshot
+      os_server_action:
+        server: web-server
+        action: stop
+      register: stop_result
+
+    - name: Create snapshot using OpenStack CLI
+      command: >
+        openstack server image create
+        --name "web-server-snap-{{ ansible_date_time.date }}"
+        web-server
+      register: cli_result
+
+    - name: Display CLI result
+      debug:
+        var: cli_result.stdout
+    
+    - name: Start instance after snapshot
+      os_server_action:
+        server: web-server
+        action: start
+   
+       
+    - name: Create a new key pair
+      os_keypair:
+        name: sherif3
+        state: present
+      register: keypair_info
+
+    - name: Debug the keypair information
+      debug:
+        var: keypair_info
+
+    - name: Save the private key locally
+      copy:
+        content: "{{ keypair_info.private_key }}"
+        dest: "/opt/stack/devstack/playbooks/sherif3.pem"
+        mode: "0600"
+      when: keypair_info.private_key is defined 
+       
+       
+       
+       
+       
+       
+       
+        # Optional Cleanup Tasks (commented out by default)
+    # - name: Delete instance
+    #   os_server:
+    #     cloud: devstack
+    #     state: absent
+    #     name: web-server
+    #     delete_fip: yes
+
+    # - name: Delete volumes
+    #   os_volume:
+    #     cloud: devstack
+    #     state: absent
+    #     display_name: "{{ item }}"
+    #   loop:
+    #     - web-server-vol
+    #     - data-vol
+
+    # - name: Delete security group
+    #   os_security_group:
+    #     cloud: devstack
+    #     state: absent
+    #     name: web-secgroup
