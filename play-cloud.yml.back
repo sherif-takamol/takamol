@@ -1,0 +1,127 @@
+- name: Manage OpenStack Resources
+  hosts: localhost
+  vars:
+    cloud_name: openstack  # Cloud name from clouds.yaml
+    network_name: internal-net
+    subnet_name: internal-subnet
+    subnet_cidr: 192.168.10.0/24
+    router_name: main-router
+    public_network: public
+    dns_servers:
+      - 8.8.8.8
+      - 8.8.4.4
+    security_group_name: web-secgroup
+    security_group_rules:
+      - { protocol: tcp, port_range_min: 22, port_range_max: 22, remote_ip_prefix: 0.0.0.0/0, description: "Allow SSH" }
+      - { protocol: tcp, port_range_min: 80, port_range_max: 80, remote_ip_prefix: 0.0.0.0/0, description: "Allow HTTP" }
+      - { protocol: tcp, port_range_min: 443, port_range_max: 443, remote_ip_prefix: 0.0.0.0/0, description: "Allow HTTPS" }
+    instance_name: web-server
+    instance_flavor: m1.nano
+    instance_image: cirros-0.6.3-x86_64-disk
+    keypair_name: sherif-key
+    metadata:
+      environment: production
+      role: web-server
+      backup: daily
+    volumes:
+      - { name: web-server-vol, size: 5, bootable: true, image: cirros-0.6.3-x86_64-disk }
+      - { name: data-vol, size: 2 }
+  tasks:
+    # Create Network and Subnet
+    - name: Create private network
+      os_network:
+        state: present
+        name: "{{ network_name }}"
+        external: false
+
+    - name: Create private subnet
+      os_subnet:
+        state: present
+        network_name: "{{ network_name }}"
+        name: "{{ subnet_name }}"
+        cidr: "{{ subnet_cidr }}"
+        dns_nameservers: "{{ dns_servers }}"
+
+    - name: Create router and attach subnet
+      os_router:
+        state: present
+        name: "{{ router_name }}"
+        network: "{{ public_network }}"
+        interfaces:
+          - "{{ subnet_name }}"
+
+    # Create Security Group and Rules
+    - name: Create security group
+      os_security_group:
+        state: present
+        name: "{{ security_group_name }}"
+        description: "Web and SSH access"
+
+    - name: Add security group rules
+      os_security_group_rule:
+        security_group: "{{ security_group_name }}"
+        protocol: "{{ item.protocol }}"
+        port_range_min: "{{ item.port_range_min }}"
+        port_range_max: "{{ item.port_range_max }}"
+        remote_ip_prefix: "{{ item.remote_ip_prefix }}"
+      loop: "{{ security_group_rules }}"
+
+    # Create Volumes
+    - name: Create volumes
+      os_volume:
+        state: present
+        display_name: "{{ item.name }}"
+        size: "{{ item.size }}"
+        image: "{{ item.image | default(omit) }}"
+      loop: "{{ volumes }}"
+      register: volumes_created
+
+    # Launch Instance
+    - name: Launch instance
+      os_server:
+        state: present
+        name: "{{ instance_name }}"
+        flavor: "{{ instance_flavor }}"
+        boot_from_volume: yes
+        volume_size: "{{ volumes[0].size }}"
+        image: "{{ instance_image }}"
+        key_name: "{{ keypair_name }}"
+        network: "{{ network_name }}"
+        security_groups: 
+          - "{{ security_group_name }}"
+        auto_ip: yes
+        wait: yes
+        timeout: 200
+      register: instance_info
+
+    # Configure Instance Metadata
+    - name: Set instance metadata
+      os_server_metadata:
+        server: "{{ instance_name }}"
+        metadata: "{{ metadata }}"
+
+    # Create Snapshots
+    - name: Create volume snapshots
+      os_volume_snapshot:
+        state: present
+        volume: "{{ item.id }}"
+        display_name: "{{ item.display_name }}-snap-{{ ansible_date_time.date }}"
+        wait: yes
+        force: yes
+      loop: "{{ volumes_created.results }}"
+      when: item.id is defined
+
+    # Manage Key Pair
+    - name: Create key pair
+      os_keypair:
+        name: "{{ keypair_name }}"
+        state: present
+      register: keypair_info
+
+    - name: Save private key locally
+      copy:
+        content: "{{ keypair_info.private_key }}"
+        dest: "/opt/stack/devstack/playbooks/{{ keypair_name }}.pem"
+        mode: "0600"
+      when: keypair_info.private_key is defined
+

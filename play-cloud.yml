@@ -1,16 +1,18 @@
 - name: Manage OpenStack Resources
   hosts: localhost
+  collections:
+    - openstack.cloud
   vars:
     cloud_name: openstack  # Cloud name from clouds.yaml
-    network_name: internal-net
-    subnet_name: internal-subnet
-    subnet_cidr: 192.168.10.0/24
-    router_name: main-router
+    network_name: internal-net1
+    subnet_name: internal-subnet1
+    subnet_cidr: 192.168.11.0/24
+    router_name: router1
     public_network: public
     dns_servers:
       - 8.8.8.8
       - 8.8.4.4
-    security_group_name: web-secgroup
+    security_group_name: web-test
     security_group_rules:
       - { protocol: tcp, port_range_min: 22, port_range_max: 22, remote_ip_prefix: 0.0.0.0/0, description: "Allow SSH" }
       - { protocol: tcp, port_range_min: 80, port_range_max: 80, remote_ip_prefix: 0.0.0.0/0, description: "Allow HTTP" }
@@ -26,150 +28,128 @@
     volumes:
       - { name: web-server-vol, size: 5, bootable: true, image: cirros-0.6.3-x86_64-disk }
       - { name: data-vol, size: 2 }
-        # Add snapshot configuration
-    snapshot_retention: 7  # Number of days to keep snapshots
-    snapshot_prefix: "auto-snap"
-
   tasks:
-    # Create Network and Subnet
-    - name: Create private network
-      os_network:
+    # Launch Instance
+    #   - name: Launch instance
+    #  os_server:
+    #    state: present
+    #   name: "{{ instance_name }}"
+    #   flavor: "{{ instance_flavor }}"
+    #   boot_from_volume: yes
+    #   volume_size: "{{ volumes[0].size }}"
+    #   image: "{{ instance_image }}"
+    #   key_name: "{{ keypair_name }}"
+    #   network: "{{ network_name }}"
+    #   security_groups: 
+    #     - "{{ security_group_name }}"
+    #   auto_ip: yes
+    #   wait: yes
+    #   timeout: 200
+    # register: instance_info
+
+    # Configure Instance Metadata
+    #- name: Set instance metadata
+    # os_server_metadata:
+    #   server: "{{ instance_name }}"
+    #   metadata: "{{ metadata }}"
+
+     - name: Authenticate to cloud and return auth token
+       openstack.cloud.auth:
+         cloud: "{{cloud_name}}"
+
+     - name: Create private network
+       openstack.cloud.network:
         state: present
         name: "{{ network_name }}"
         external: false
 
-    - name: Create private subnet
-      os_subnet:
-        state: present
-        network_name: "{{ network_name }}"
-        name: "{{ subnet_name }}"
-        cidr: "{{ subnet_cidr }}"
-        dns_nameservers: "{{ dns_servers }}"
+     - name: Create private subnet
+       openstack.cloud.subnet:
+         state: present
+         network_name: "{{ network_name }}"
+         name: "{{ subnet_name }}"
+         cidr: "{{ subnet_cidr }}"
+         dns_nameservers: "{{ dns_servers }}"
 
-    - name: Create router and attach subnet
-      os_router:
-        state: present
-        name: "{{ router_name }}"
-        network: "{{ public_network }}"
-        interfaces:
-          - "{{ subnet_name }}"
+     - name: Create router and attach subnet
+       openstack.cloud.router:
+         state: present
+         name: "{{ router_name }}"
+         network: "{{ public_network }}"
+         interfaces:
+           - "{{ subnet_name }}"
 
-    # Create Security Group and Rules
-    - name: Create security group
-      os_security_group:
-        state: present
-        name: "{{ security_group_name }}"
-        description: "Web and SSH access"
+          # Create Security Group and Rules
+     - name: Create security group
+       openstack.cloud.security_group:
+         state: present
+         name: "{{ security_group_name }}"
+         description: "Web and SSH access"
 
-    - name: Add security group rules
-      os_security_group_rule:
-        security_group: "{{ security_group_name }}"
-        protocol: "{{ item.protocol }}"
-        port_range_min: "{{ item.port_range_min }}"
-        port_range_max: "{{ item.port_range_max }}"
-        remote_ip_prefix: "{{ item.remote_ip_prefix }}"
-      loop: "{{ security_group_rules }}"
+     - name: Add security group rules
+       openstack.cloud.security_group_rule:
+         security_group: "{{ security_group_name }}"
+         protocol: "{{ item.protocol }}"
+         port_range_min: "{{ item.port_range_min }}"
+         port_range_max: "{{ item.port_range_max }}"
+         remote_ip_prefix: "{{ item.remote_ip_prefix }}"
+       loop: "{{ security_group_rules }}"
 
-    # Create Volumes
-    - name: Create volumes
-      os_volume:
-        state: present
-        display_name: "{{ item.name }}"
-        size: "{{ item.size }}"
-        image: "{{ item.image | default(omit) }}"
-      loop: "{{ volumes }}"
-      register: volumes_created
+             # Create Volumes
+     - name: Create volumes
+       openstack.cloud.volume:
+         state: present
+         display_name: "{{ item.name }}"
+         size: "{{ item.size }}"
+         image: "{{ item.image | default(omit) }}"
+       loop: "{{ volumes }}"
+       register: volumes_created
 
-    # Launch Instance
-    - name: Launch instance
-      os_server:
-        state: present
-        name: "{{ instance_name }}"
-        flavor: "{{ instance_flavor }}"
-        boot_from_volume: yes
-        volume_size: "{{ volumes[0].size }}"
-        image: "{{ instance_image }}"
-        key_name: "{{ keypair_name }}"
-        network: "{{ network_name }}"
-        security_groups: 
-          - "{{ security_group_name }}"
-        auto_ip: yes
-        wait: yes
-        timeout: 200
-      register: instance_info
+             # Launch Instance
+     - name: Launch instance
+       openstack.cloud.server:
+         state: present
+         name: "{{ instance_name }}"
+         flavor: "{{ instance_flavor }}"
+         boot_from_volume: yes
+         volume_size: "{{ volumes[0].size }}"
+         image: "{{ instance_image }}"
+         key_name: "{{ keypair_name }}"
+         network: "{{ network_name }}"
+         security_groups:
+           - "{{ security_group_name }}"
+         auto_ip: yes
+         wait: yes
+         timeout: 200
+       register: instance_info
 
-    # Configure Instance Metadata
-    - name: Set instance metadata
-      os_server_metadata:
-        server: "{{ instance_name }}"
-        metadata: "{{ metadata }}"
+     # Configure Instance Metadata
+     - name: Set instance metadata
+       openstack.cloud.server_metadata:
+         server: "{{ instance_name }}"
+         metadata: "{{ metadata }}"
 
-        # Create Snapshots
-    - name: Get current timestamp
-      command: date +%Y%m%d-%H%M%S
-      register: timestamp
-      changed_when: false
+          # Manage Key Pair
+     - name: Create key pair
+       openstack.cloud.keypair:
+         name: "{{ keypair_name }}"
+         state: present
+       register: keypair_info
 
-        # Create Snapshots
-    - name: Get current timestamp
-      command: date +%Y%m%d-%H%M%S
-      register: timestamp
-      changed_when: false
+     - name: Save private key locally
+       copy:
+         content: "{{ keypair_info.private_key }}"
+         dest: "/opt/stack/devstack/playbooks/{{ keypair_name }}.pem"
+         mode: "0600"
+       when: keypair_info.private_key is defined
 
-    - name: Create volume snapshots
-      os_volume_snapshot:
-        state: present
-        volume: "{{ item.name }}"
-        name: "{{ snapshot_prefix }}-{{ item.name }}-{{ timestamp.stdout }}"
-        description: "Automated snapshot created by Ansible on {{ timestamp.stdout }}. Source volume: {{ item.name }}, Retention days: {{ snapshot_retention }}"
-        wait: yes
-        timeout: 600
-        force: yes
-      loop: "{{ volumes }}"
-      register: snapshots_created
+     - openstack.cloud.floating_ip:
+         server:  web-server
 
-    - name: Display snapshot information
-      debug:
-        msg: "Created snapshot {{ item.snapshot.name }} for volume {{ item.snapshot.volume_id }}"
-      loop: "{{ snapshots_created.results }}"
-      when: snapshots_created.changed
-
-
-    - name: Calculate retention date
-      set_fact:
-        retention_date: "{{ (ansible_date_time.epoch | int) - (snapshot_retention | int * 86400) }}"
-
-    - name: Remove old snapshots
-      os_volume_snapshot:
-        state: absent
-        snapshot_id: "{{ item.id }}"
-        wait: yes
-        timeout: 600
-      loop: "{{ existing_snapshots.openstack_volume_snapshots }}"
-      when: 
-        - item.created_at_timestamp is defined
-        - item.created_at_timestamp | int < retention_date | int
-      register: cleanup_results
-
-    - name: Display cleanup information
-      debug:
-        msg: "Removed old snapshot {{ item.snapshot_id }}"
-      loop: "{{ cleanup_results.results }}"
-      when: 
-        - cleanup_results.changed
-        - item.changed | default(false)
-
-    # Manage Key Pair
-    - name: Create key pair
-      os_keypair:
-        name: "{{ keypair_name }}"
-        state: present
-      register: keypair_info
-
-    - name: Save private key locally
-      copy:
-        content: "{{ keypair_info.private_key }}"
-        dest: "/opt/stack/devstack/playbooks/{{ keypair_name }}.pem"
-        mode: "0600"
-      when: keypair_info.private_key is defined
-
+     - openstack.cloud.floating_ip:
+         state: present
+         server: "{{ instance_name }}"
+         network: shared
+         nat_destination: public
+         wait: true
+         timeout: 180
